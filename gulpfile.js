@@ -83,8 +83,8 @@ gulp.task('webserver', gulp.series(async function() {
 		https: false,
 		host: '0.0.0.0',
 		https: {
-			key: fs.readFileSync(path.resolve(__dirname, '../certs/server.key')),
-			cert: fs.readFileSync(path.resolve(__dirname, '../certs/server.key'))
+			key:  fs.readFileSync(path.resolve(__dirname, '../certs/server.key')),
+			cert: fs.readFileSync(path.resolve(__dirname, '../certs/server.cert'))
 		  }
 	});
 }));
