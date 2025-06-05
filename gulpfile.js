@@ -81,11 +81,6 @@ gulp.task('webserver', gulp.series(async function() {
 	server = connect.server({
 		port: 1234,
 		https: false,
-		host: '0.0.0.0',
-		https: {
-			key:  fs.readFileSync(path.resolve(__dirname, '../certs/server.key')),
-			cert: fs.readFileSync(path.resolve(__dirname, '../certs/server.cert'))
-		  }
 	});
 }));
 

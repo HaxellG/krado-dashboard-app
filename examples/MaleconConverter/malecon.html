@@ -2249,7 +2249,7 @@
       accessKeyId: 'AKIAZCRUSKBBQ7DPZY5N',
       secretAccessKey: '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',
       sessionToken: null,
-      topic: 'location/+/gps',
+      topic: 'devices/+/gps',
       clientId: 'krado-dashboard-' + Math.random().toString(36).substr(2, 9)
     };
     
@@ -2443,15 +2443,22 @@
     
     const handleAWSIoTMessage = (topic, payloadString) => {
       try {        
-        // Parse the incoming message
-        let message;
-        try {
-          message = JSON.parse(payloadString);
-        } catch (parseError) {
-          console.error('❌ JSON Parse Error:', parseError);
-          return;
-        }
-        processNewCoordinate(message);
+        // Ejemplo de topic: "devices/phone/gps"
+    // Partimos el topic por "/" y tomamos el segundo elemento:
+    const parts = topic.split('/');
+    const deviceId = parts[1]; // “phone” en este ejemplo
+
+    // Parsear el payload JSON
+    let message;
+    try {
+      message = JSON.parse(payloadString);
+    } catch (parseError) {
+      console.error('❌ JSON Parse Error:', parseError);
+      return;
+    }
+    message['deviceId'] = deviceId;
+    // Ahora pasamos el objeto y el deviceId separado
+    processNewCoordinate(message);
         
         
       } catch (error) {
@@ -2908,16 +2915,16 @@
           }
         }
         
-        // Mapa de análisis (map_container_analysis)
         window.mapAnalysis = L.map('map_container_analysis', {
           zoomControl: false,
           attributionControl: false,
           scrollWheelZoom: false
         }).setView(initialCenter, initialZoom);
-
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19,
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        
+        // Dark map style
+        L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+          maxZoom: 20,
+          attribution: ''
         }).addTo(window.mapAnalysis);
         
         // Initialize empty markers object for analysis
@@ -3118,7 +3125,6 @@
         }
       }
       
-      // Mapa completo (fullmap_container)
       fullMap = L.map('fullmap_container', {
         zoomControl: true,
         attributionControl: false,
@@ -3128,10 +3134,11 @@
         boxZoom: true,
         keyboard: true
       }).setView(initialCenter, initialZoom);
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      
+      // Dark map style
+      L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+        maxZoom: 20,
+        attribution: ''
       }).addTo(fullMap);
       
       // Create markers for full map
@@ -3343,16 +3350,17 @@
       });
     };
     
-    // Mapa pequeño en la vista 3D (map_container)
+    /* Leaflet Map Setup (Small map in 3D view) */
     const map = L.map('map_container', {
       zoomControl: false,
       attributionControl: false,
       scrollWheelZoom: false
-    }).setView([11.026178, -74.800039], 16);
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).setView([11.026178, -74.800039], 16); // Default coordinates
+    
+    // Dark map style
+    L.tileLayer('https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20,
+      attribution: ''
     }).addTo(map);
     
     // Initialize empty markers object
@@ -3458,7 +3466,7 @@
     viewer.loadSettingsFromURL();
     
     // Load point cloud
-    Potree.loadPointCloud('./pointclouds/metadata.json', 'malecon', e => {
+    Potree.loadPointCloud('./pointclouds/malecon/metadata.json', 'malecon', e => {
       const pc = e.pointcloud;
       Object.assign(pc.material, {
         size: 1,
