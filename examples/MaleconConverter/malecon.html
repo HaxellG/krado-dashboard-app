@@ -2908,22 +2908,17 @@
           }
         }
         
+        // Mapa de análisis (map_container_analysis)
         window.mapAnalysis = L.map('map_container_analysis', {
           zoomControl: false,
           attributionControl: false,
           scrollWheelZoom: false
         }).setView(initialCenter, initialZoom);
-        
-        // Dark map style
-        L.tileLayer(
-  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-  {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-  }
-).addTo(map);
 
-
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(window.mapAnalysis);
         
         // Initialize empty markers object for analysis
         window.markers2DAnalysis = {};
@@ -3123,6 +3118,7 @@
         }
       }
       
+      // Mapa completo (fullmap_container)
       fullMap = L.map('fullmap_container', {
         zoomControl: true,
         attributionControl: false,
@@ -3132,14 +3128,11 @@
         boxZoom: true,
         keyboard: true
       }).setView(initialCenter, initialZoom);
-      
-      // Dark map style
+
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
-}).addTo(window.mapAnalysis);
-
-
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(fullMap);
       
       // Create markers for full map
       Object.entries(deviceGroups).forEach(([deviceId, coords]) => {
@@ -3350,23 +3343,17 @@
       });
     };
     
-    /* Leaflet Map Setup (Small map in 3D view) */
+    // Mapa pequeño en la vista 3D (map_container)
     const map = L.map('map_container', {
       zoomControl: false,
       attributionControl: false,
       scrollWheelZoom: false
-    }).setView([11.026178, -74.800039], 16); // Default coordinates
-    
-    // Dark map style
-    L.tileLayer(
-  'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png', 
-  {
-    maxZoom: 20,
-    attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; ' +
-                 '<a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; ' +
-                 '<a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
-  }
-).addTo(map);
+    }).setView([11.026178, -74.800039], 16);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
     
     // Initialize empty markers object
     const markers2D = {};
