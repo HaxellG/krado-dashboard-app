@@ -81,6 +81,7 @@ gulp.task('webserver', gulp.series(async function() {
 	server = connect.server({
 		port: 1234,
 		https: false,
+		host: '0.0.0.0',
 	});
 }));
 
