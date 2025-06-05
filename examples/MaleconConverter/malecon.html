@@ -3458,7 +3458,7 @@
     viewer.loadSettingsFromURL();
     
     // Load point cloud
-    Potree.loadPointCloud('../../pointsCloudOfficialFolder/metadata.json', 'malecon', e => {
+    Potree.loadPointCloud('../../../pointsCloudOfficialFolder/metadata.json', 'malecon', e => {
       const pc = e.pointcloud;
       Object.assign(pc.material, {
         size: 1,
