@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Potree Viewer con AWS IoT Device SDK</title>
+
+  <link rel="stylesheet" href="./libs/potree/potree.css">
+  <link rel="stylesheet" href="./libs/jquery-ui/jquery-ui.min.css">
+  <link rel="stylesheet" href="./libs/openlayers3/ol.css">
+  <link rel="stylesheet" href="./libs/spectrum/spectrum.css">
+  <link rel="stylesheet" href="./libs/jstree/themes/mixed/style.css">
+  <style>
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+    .potree_container { position:absolute; width:100%; height:100%; top:0; left:0; }
+    #heartRateMonitor {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      background-color: rgba(0,0,0,0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      font-family: Arial, sans-serif;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #heartRateValue {
+      font-size: 32px;
+      font-weight: bold;
+      color: #69f0ae;
+    }
+    #heartRateTime {
+      font-size: 12px;
+      margin-top: 5px;
+      color: #ccc;
+    }
+    .heartbeat { animation: heartbeat 1s ease-in-out infinite; }
+    @keyframes heartbeat {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+    .error-message-box {
+        position: fixed;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 15px;
+        background-color: #ff4d4d;
+        color: white;
+        border-radius: 8px;
+        z-index: 2000;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        text-align: center;
+        max-width: 80%;
+    }
+  </style>
+</head>
+<body>
+  <!-- Dependencias -->
+  <script src="./libs/jquery/jquery-3.1.1.min.js"></script>
+  <script src="./libs/spectrum/spectrum.js"></script>
+  <script src="./libs/jquery-ui/jquery-ui.min.js"></script>
+  <script src="./libs/other/BinaryHeap.js"></script>
+  <script src="./libs/tween/tween.min.js"></script>
+  <script src="./libs/d3/d3.js"></script>
+  <script src="./libs/proj4/proj4.js"></script>
+  <script src="./libs/openlayers3/ol.js"></script>
+  <script src="./libs/i18next/i18next.js"></script>
+  <script src="./libs/jstree/jstree.js"></script>
+
+  <!-- Three.js r124 -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r124/three.min.js"></script>
+  <script src="./libs/potree/potree.js"></script>
+  <script src="./libs/plasio/js/laslaz.js"></script>
+
+  <!-- AWS SDK and Paho MQTT -->
+  <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1408.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+
+  <div class="potree_container">
+    <div id="potree_render_area" style="background-image:url('../../build/potree/resources/images/background.jpg');">
+    </div>
+    <div id="potree_sidebar_container"></div>
+    <div id="heartRateMonitor">
+      <div>Frecuencia Cardíaca</div>
+      <div id="heartRateValue" class="heartbeat">72</div>
+      <div id="heartRateTime">BPM - En tiempo real</div>
+    </div>
+  </div>
+
+  <script>
+    const FIXED_HEART_RATE = 72;
+    const HEART_RATE_UPDATE_INTERVAL = 3000;
+
+    function simulateHeartRate() {
+      const variation = Math.floor(Math.random() * 6) - 3;
+      return FIXED_HEART_RATE + variation;
+    }
+
+    function updateHeartRateDisplay(value) {
+      const now = new Date();
+      const timeString = now.toLocaleTimeString('es-ES', {
+        hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+      const heartRateValueEl = document.getElementById('heartRateValue');
+      const heartRateTimeEl = document.getElementById('heartRateTime');
+      if (heartRateValueEl) heartRateValueEl.textContent = value;
+      if (heartRateTimeEl) heartRateTimeEl.textContent = `BPM - ${timeString}`;
+      
+      let color = '#69f0ae';
+      if (value < 60) color = '#4fc3f7';
+      else if (value > 100) color = '#ff5252';
+      if (heartRateValueEl) heartRateValueEl.style.color = color;
+    }
+
+    function startHeartRateMonitoring() {
+      updateHeartRateDisplay(FIXED_HEART_RATE);
+      setInterval(() => {
+        updateHeartRateDisplay(simulateHeartRate());
+      }, HEART_RATE_UPDATE_INTERVAL);
+    }
+
+    const IOT_CONNECTION_CONFIG = {
+      region: 'us-east-1',
+      endpoint: 'a3mdq70kx5xf73-ats.iot.us-east-1.amazonaws.com',
+      accessKeyId: 'AKIARFVYANTIPKJ4GZDG',
+      secretAccessKey: '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',
+      sessionToken: null,
+      topic: 'location/+/gps',
+      clientId: 'client_' + Math.random().toString(12).substr(2, 9)
+    };
+
+    let pahoMqttClient = null;
+    let isIotConnected = false;
+
+    window.mqttRealTimeMarker = null;
+
+    function updateMqttRealTimeMarker(x, y, z) {
+      if (!window.viewer || !window.viewer.scene) {
+        console.warn("Potree viewer or scene not initialized yet. MQTT marker cannot be updated.");
+        return;
+      }
+      if (window.mqttRealTimeMarker) {
+        window.viewer.scene.removeMeasurement(window.mqttRealTimeMarker);
+      }
+      const marker = new Potree.Measure();
+      marker.name = "RealTime MQTT Position";
+      marker.showCoordinates = true;
+      marker.maxMarkers = 1;
+      const numX = parseFloat(x);
+      const numY = parseFloat(y);
+      const numZ = parseFloat(z);
+      if (isNaN(numX) || isNaN(numY) || isNaN(numZ)) {
+        console.error("Invalid coordinates received from MQTT:", x, y, z);
+        return;
+      }
+      marker.addMarker(new THREE.Vector3(numX, numY, numZ));
+      window.viewer.scene.addMeasurement(marker);
+      window.mqttRealTimeMarker = marker;
+      console.log(`MQTT RealTime Marker updated to: X=${numX}, Y=${numY}, Z=${numZ}`);
+    }
+
+    function showErrorMessage(message) {
+        let errorBox = document.getElementById('mqtt-error-box');
+        if (!errorBox) {
+            errorBox = document.createElement('div');
+            errorBox.id = 'mqtt-error-box';
+            errorBox.className = 'error-message-box';
+            document.body.appendChild(errorBox);
+        }
+        errorBox.textContent = message;
+        errorBox.style.display = 'block';
+    }
+
+    function hideErrorMessage() {
+        let errorBox = document.getElementById('mqtt-error-box');
+        if (errorBox) {
+            errorBox.style.display = 'none';
+        }
+    }
+
+    const computeSHA256 = async (message) => {
+      const msgBuffer = new TextEncoder().encode(message);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    const computeHmacSHA256 = async (key, message) => {
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        key,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      const signature = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
+      return new Uint8Array(signature);
+    };
+
+    const computeHmacSHA256Hex = async (key, message) => {
+      const signature = await computeHmacSHA256(key, message);
+      return Array.from(signature).map(b => b.toString(16).padStart(2, '0')).join('');
+    };
+
+    const deriveSigningKey = async (key, dateStamp, regionName, serviceName) => {
+      const kDate = await computeHmacSHA256(new TextEncoder().encode('AWS4' + key), dateStamp);
+      const kRegion = await computeHmacSHA256(kDate, regionName);
+      const kService = await computeHmacSHA256(kRegion, serviceName);
+      const kSigning = await computeHmacSHA256(kService, 'aws4_request');
+      return kSigning;
+    };
+
+    // --- WebSocket URL signing function (adapted from Krado) ---
+    const generateSignedWebSocketEndpoint = async () => {
+      const method = 'GET';
+      const protocol = 'wss';
+      const hostname = IOT_CONNECTION_CONFIG.endpoint;
+      const path = '/mqtt';
+      
+      // Configure AWS credentials
+      AWS.config.update({
+        accessKeyId: IOT_CONNECTION_CONFIG.accessKeyId,
+        secretAccessKey: IOT_CONNECTION_CONFIG.secretAccessKey,
+        region: IOT_CONNECTION_CONFIG.region
+      });
+      
+      // Get current timestamp
+      const now = new Date();
+      const amzDate = now.toISOString().replace(/[:\-]|\.\d{3}/g, '');
+      const dateStamp = amzDate.substr(0, 8);
+      
+      // Create credential scope
+      const credentialScope = `${dateStamp}/${IOT_CONNECTION_CONFIG.region}/iotdevicegateway/aws4_request`;
+      
+      // Create canonical query string
+      const canonicalQuerystring = [
+        'X-Amz-Algorithm=AWS4-HMAC-SHA256',
+        `X-Amz-Credential=${encodeURIComponent(IOT_CONNECTION_CONFIG.accessKeyId + '/' + credentialScope)}`,
+        `X-Amz-Date=${amzDate}`,
+        'X-Amz-SignedHeaders=host'
+      ].join('&');
+      
+      // Create canonical request
+      const canonicalHeaders = `host:${hostname}\n`;
+      const signedHeaders = 'host';
+      const payloadHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+      
+      const canonicalRequest = [
+        method,
+        path,
+        canonicalQuerystring,
+        canonicalHeaders,
+        signedHeaders,
+        payloadHash
+      ].join('\n');
+      
+      // Create string to sign
+      const algorithm = 'AWS4-HMAC-SHA256';
+      const stringToSign = [
+        algorithm,
+        amzDate,
+        credentialScope,
+        await computeSHA256(canonicalRequest)
+      ].join('\n');
+      
+      // Create signing key
+      const signingKey = await deriveSigningKey(
+        IOT_CONNECTION_CONFIG.secretAccessKey,
+        dateStamp,
+        IOT_CONNECTION_CONFIG.region,
+        'iotdevicegateway'
+      );
+      
+      // Create signature
+      const signature = await computeHmacSHA256Hex(signingKey, stringToSign);
+      
+      // Build final URL
+      const finalUrl = `${protocol}://${hostname}${path}?${canonicalQuerystring}&X-Amz-Signature=${signature}`;
+      
+      return finalUrl;
+    };
+
+    // --- Subscribe to MQTT topic (adapted from Krado) ---
+    const subscribeToMqttTopic = () => {
+      if (!isIotConnected || !pahoMqttClient) {
+        console.error('Cannot subscribe: Not connected to AWS IoT');
+        return;
+      }
+      
+      try {
+        console.log(`📡 Subscribing to topic: ${IOT_CONNECTION_CONFIG.topic}`);
+        
+        pahoMqttClient.subscribe(IOT_CONNECTION_CONFIG.topic, {
+          onSuccess: () => {
+            console.log(`Successfully subscribed to topic`);
+          },
+          onFailure: (error) => {
+            console.error(`Failed to subscribe to topic:`, error);
+            showErrorMessage(`Failed to subscribe to topic`);
+          }
+        });
+        
+      } catch (error) {
+        console.error('Error during subscription:', error);
+        showErrorMessage(`Subscription error: ${error.message}`);
+      }
+    };
+
+    // --- Handle MQTT messages (adapted from Krado) ---
+    const handleMqttMessage = (topic, payloadString) => {
+      try {
+        console.log(`🔥 NEW EVENT RECEIVED! 🔥`);
+        console.log(`📡 Message on topic '${topic}': ${payloadString}`);
+        
+        // Parse the incoming message
+        let message;
+        try {
+          message = JSON.parse(payloadString);
+          console.log(`Parsed Message:`, message);
+        } catch (parseError) {
+          return;
+        }
+
+        // Check for coordinate data and update marker
+        if (message.x !== undefined && message.y !== undefined && message.z !== undefined) {
+          updateMqttRealTimeMarker(message.x, message.y, message.z);
+        } else if (message.latitude !== undefined && message.longitude !== undefined && message.altitude !== undefined) {
+          console.log("Geographic coordinates:", message.latitude, message.longitude, message.altitude);
+        } else {
+          console.warn("MQTT message missing expected coordinate fields. Payload:", message);
+        }
+        
+      } catch (error) {
+        console.error('Error processing MQTT message:', error);
+      }
+    };
+
+    // --- Connect to AWS IoT Core (adapted from Krado) ---
+    const connectToAwsIotCore = async () => {
+      try {
+        console.log('Connecting to AWS IoT Core');
+        
+        // Create signed WebSocket URL
+        const websocketUrl = await generateSignedWebSocketEndpoint();
+        
+        // Extract hostname and path from the URL for Paho client
+        const urlObj = new URL(websocketUrl);
+        const hostname = urlObj.hostname;
+        const port = 443;
+        const path = urlObj.pathname + urlObj.search;
+                
+        // Create MQTT client using Paho
+        pahoMqttClient = new Paho.MQTT.Client(hostname, port, path, IOT_CONNECTION_CONFIG.clientId);
+        
+        // Set up event handlers
+        pahoMqttClient.onConnectionLost = (responseObject) => {
+          console.error('MQTT Connection lost:', responseObject.errorMessage);
+          isIotConnected = false;
+          showErrorMessage('Connection lost. Attempting to reconnect...');
+          
+          // Attempt to reconnect
+          setTimeout(() => {
+            console.log('🔄 Attempting to reconnect...');
+            connectToAwsIotCore();
+          }, 5000);
+        };
+        
+        pahoMqttClient.onMessageArrived = (message) => {          
+          handleMqttMessage(message.destinationName, message.payloadString);
+        };
+        
+        // Connection options
+        const connectOptions = {
+          useSSL: true,
+          mqttVersion: 4,
+          onSuccess: () => {
+            console.log('Successfully connected to AWS IoT Core MQTT');
+            isIotConnected = true;
+            hideErrorMessage();
+            subscribeToMqttTopic();
+          },
+          onFailure: (error) => {
+            console.error('Failed to connect to AWS IoT Core:', error);
+            console.error('Error details:', error.errorMessage);
+            isIotConnected = false;
+            showErrorMessage(`Connection failed: ${error.errorMessage}`);
+          }
+        };
+        
+        // Connect to AWS IoT Core
+        console.log('Initiating MQTT connection');
+        pahoMqttClient.connect(connectOptions);
+        
+      } catch (error) {
+        console.error('Failed to setup AWS IoT Core connection:', error);
+        console.log('AWS IoT setup failed. Please check configuration.');
+        isIotConnected = false;
+        showErrorMessage(`Setup failed: ${error.message}`);
+      }
+    };
+
+    // --- Initialization ---
+    window.addEventListener('load', function() {
+      window.viewer = new Potree.Viewer(document.getElementById("potree_render_area"));
+      window.viewer.setEDLEnabled(true);
+      window.viewer.setFOV(60);
+      window.viewer.setPointBudget(2500000);
+
+      window.viewer.loadGUI(() => {
+        window.viewer.setLanguage('es');
+        if (typeof $ !== 'undefined' && $("#menu_appearance").length) {
+            $("#menu_appearance").next().show();
+        }
+        console.log("Potree GUI cargada");
+        startHeartRateMonitoring();
+        
+        // Initialize AWS IoT connection
+        connectToAwsIotCore();
+      });
+
+      window.viewer.loadSettingsFromURL();
+      window.viewer.useHQ = true;
+
+      Potree.loadPointCloud("./pointclouds/malecon/metadata.json", "malecon", e => {
+        if (!e.pointcloud) {
+          const msg = "Error: No se pudo cargar la nube de puntos :(";
+          console.error(msg);
+          showErrorMessage(msg);
+          return;
+        }
+        const pc = e.pointcloud;
+        const mat = pc.material;
+        mat.size = 1;
+        mat.pointSizeType = Potree.PointSizeType.ADAPTIVE;
+        mat.shape = Potree.PointShape.SQUARE;
+        mat.activeAttributeName = "elevation";
+        mat.gradient = Potree.Gradients.RAINBOW;
+        mat.needsUpdate = true;
+        window.viewer.scene.addPointCloud(pc);
+        window.viewer.fitToScreen();
+      });
+    });
+  </script>
+</body>
+</html>
